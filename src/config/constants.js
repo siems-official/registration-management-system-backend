@@ -66,6 +66,39 @@ export const AUDIT_ACTIONS = {
 
 export const CURRENCY = 'BDT';
 
+/**
+ * Single source of truth for CellFin gateway status → our internal status.
+ * Every interpretation of a CellFin status must go through this map — never
+ * inline string comparisons. An unrecognized status MUST be treated as
+ * 'Verification Failed' by callers (never guessed), since one we don't know
+ * is a reason to stop and flag it.
+ *
+ * Note: 'DUPLICATE_TOKEN_REQUEEST' is spelled exactly as it appears in the
+ * Islami Bank API document (including the double-E).
+ */
+export const CELLFIN_STATUS_MAP = {
+  APPROVED: PAYMENT_STATUSES.PAID,
+  FAILED: PAYMENT_STATUSES.FAILED,
+  CANCELLED: PAYMENT_STATUSES.CANCELLED,
+  UN_ATTEMPTED: PAYMENT_STATUSES.CANCELLED,
+  QUEUED: PAYMENT_STATUSES.PENDING,
+  OTP_SENT: PAYMENT_STATUSES.PENDING,
+  DUPLICATE_TOKEN_REQUEEST: PAYMENT_STATUSES.FAILED,
+  EXCEED_FUND_AVAILABLE: PAYMENT_STATUSES.FAILED,
+  EXCEED_DAILY_LIMIT: PAYMENT_STATUSES.FAILED,
+  EXCEED_MONTHLY_LIMIT: PAYMENT_STATUSES.FAILED,
+  EXPIRED: PAYMENT_STATUSES.FAILED,
+  REFUNDED: PAYMENT_STATUSES.CANCELLED,
+  INVALID_TRANSACTION: PAYMENT_STATUSES.VERIFICATION_FAILED,
+  UNABLE_TO_PROCESS: PAYMENT_STATUSES.VERIFICATION_FAILED,
+  UNABLE_TO_REFUND: PAYMENT_STATUSES.VERIFICATION_FAILED,
+  AUTHENTICATION_FAILED: PAYMENT_STATUSES.VERIFICATION_FAILED,
+  NOT_FOUND: PAYMENT_STATUSES.VERIFICATION_FAILED
+};
+
+/** The one status that means "approved" as far as settlement is concerned. */
+export const CELLFIN_APPROVED_STATUS = 'APPROVED';
+
 export const MAX_ACCOMPANY = 20;
 
 export const ALIGNMENT_MARKET = 'event';

@@ -15,9 +15,9 @@ export function errorHandler(err, req, res, _next) {
     return res.status(err.statusCode).json(body);
   }
 
-  // SSLCommerz gateway failures — surface as 502, never a generic 500.
-  if (err?.name === 'SslcommerzError') {
-    logger.error({ err, path: req.originalUrl }, 'SSLCommerz gateway error');
+  // CellFin gateway failures — surface as 502, never a generic 500.
+  if (err?.name === 'CellfinError') {
+    logger.error({ err, path: req.originalUrl }, 'CellFin gateway error');
     return res.status(502).json({
       success: false,
       error: { code: 'GATEWAY_ERROR', message: 'The payment gateway could not be reached.' }

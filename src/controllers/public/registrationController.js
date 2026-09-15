@@ -9,10 +9,9 @@ import {
 } from '../../services/registrationService.js';
 import { calculatePayableAmount } from '../../services/feeService.js';
 import { isCapacityAvailable } from '../../services/capacityService.js';
-import { initiateSession } from '../../services/sslcommerzService.js';
+import { createToken } from '../../services/cellfinService.js';
 import { storeUploadedPhoto } from '../../services/uploadService.js';
 import { PAYMENT_STATUSES } from '../../config/constants.js';
-import { env } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
 import FeeConfig from '../../models/FeeConfig.js';
 import Registration from '../../models/Registration.js';
@@ -59,22 +58,16 @@ export const createRegistration = asyncHandler(async (req, res) => {
 
   let gatewayUrl = null;
   try {
-    const session = await initiateSession({
-      tranId,
+    const session = await createToken({
+      correlationId: tranId,
       amount: payableAmount,
-      participant: registration,
-      gatewayUrls: {
-        successUrl: env.sslcommerz.successUrl,
-        failUrl: env.sslcommerz.failUrl,
-        cancelUrl: env.sslcommerz.cancelUrl,
-        ipnUrl: env.sslcommerz.ipnUrl
-      }
+      userMobile: body.whatsappNo
     });
-    gatewayUrl = session.gatewayPageUrl;
+    gatewayUrl = session.redirectUrl;
   } catch (err) {
     // Section 6.3 / Part-1 fix: the Pending registration MUST persist after a
     // gateway-init failure so an admin can recover it via resume-payment.
-    logger.error({ err, registrationId: registration._id, tranId }, 'Session init failed post-creation');
+    logger.error({ err, registrationId: registration._id, tranId }, 'Token creation failed post-creation');
     return fail(
       res,
       502,

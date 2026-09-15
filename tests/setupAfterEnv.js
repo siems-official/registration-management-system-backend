@@ -3,7 +3,7 @@ import { mockGatewayClient } from './mockGateway.js';
 
 jest.setTimeout(90000);
 
-// sslcommerzService does `import axios from 'axios'` then builds
+// cellfinService does `import axios from 'axios'` then builds
 // `const client = axios.create(...)` once at module load. Under
 // --experimental-vm-modules jest.mock doesn't intercept CJS-to-ESM
 // imports; jest.unstable_mockModule does.

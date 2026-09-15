@@ -2,6 +2,7 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 import mongoose from 'mongoose';
 import bcrypt from 'bcrypt';
 import { authenticator } from 'otplib';
+import { expect } from '@jest/globals';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
 import Admin from '../src/models/Admin.js';
@@ -75,12 +76,21 @@ export async function loginStep1(app, { username = 'super', password = 'strongpa
 }
 
 export async function loginStep2(app, preauthToken, totp = null) {
-  const code = totp || authenticator.generate(TEST_TOTP);
-  const res = await request(app)
-    .post('/api/admin/auth/login/verify-2fa')
-    .set('Authorization', `Bearer ${preauthToken}`)
-    .send({ totp: code })
-    .expect(200);
+  const attempt = async (epoch) => {
+    const code = totp || authenticator.generate(TEST_TOTP, { epoch });
+    return request(app)
+      .post('/api/admin/auth/login/verify-2fa')
+      .set('Authorization', `Bearer ${preauthToken}`)
+      .send({ totp: code });
+  };
+
+  let res = await attempt(Date.now());
+  if (res.status === 401) {
+    // TOTP second-boundary race: the generated code can land in the just-finished
+    // 30s window. Retry once with the next window before declaring failure.
+    res = await attempt(Date.now() + 30_000);
+  }
+  expect(res.status).toBe(200);
   return res.body.data.token;
 }
 
@@ -143,7 +153,7 @@ export function attachRegistrationBody(req, payload) {
 
 /**
  * Register a participant through the public multipart endpoint with a real
- * photo. Requires sslcommerz.initiateSession to be mocked by the caller.
+ * photo. Requires cellfin.createToken to be mocked by the caller.
  */
 export async function registerParticipant(app, payload, { photo = makePng(100, 100) } = {}) {
   let req = request(app).post('/api/registrations');
@@ -151,6 +161,20 @@ export async function registerParticipant(app, payload, { photo = makePng(100, 1
   if (photo) req = req.attach('photo', photo, { filename: 'photo.png', contentType: 'image/png' });
   const res = await req;
   return res;
+}
+
+/**
+ * Build a CellFin-shaped IPN POST body.
+ */
+export function cellfinIpnPayload(reg, overrides = {}) {
+  return {
+    correlationId: reg.tran_id,
+    token: `mock-token-${reg.tran_id}`,
+    trId: `mock-tr-${reg.tran_id}`,
+    status: 'APPROVED',
+    tr_amount: reg.payableAmount,
+    ...overrides
+  };
 }
 
 export async function findRegistrationByEmail(email) {

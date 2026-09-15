@@ -41,7 +41,11 @@ const RegistrationSchema = new mongoose.Schema(
     photoUrl: { type: String, default: '', trim: true },
 
     tran_id: { type: String, required: true },
-    gatewayValidationId: { type: String, default: null },
+    // CellFin payment token (returned at token creation / IPN). Persisted at
+    // settlement and used for the authoritative status query and future refund.
+    gatewayToken: { type: String, default: null },
+    // CellFin transaction ID (trId) set once a payment is APPROVED.
+    gatewayTrId: { type: String, default: null },
     paymentStatus: {
       type: String,
       enum: Object.values(PAYMENT_STATUSES),

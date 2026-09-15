@@ -1,5 +1,5 @@
-import { CURRENCY, PAYMENT_STATUSES } from '../config/constants.js';
-import { isMockMode, validateTransaction, SslcommerzError } from './sslcommerzService.js';
+import { PAYMENT_STATUSES, CELLFIN_STATUS_MAP, CELLFIN_APPROVED_STATUS } from '../config/constants.js';
+import { isMockMode, queryStatus, CellfinError } from './cellfinService.js';
 import { reserveSlot } from './capacityService.js';
 import { issueTicket } from './ticketService.js';
 import { enqueueTicketConfirmation } from './queueService.js';
@@ -8,17 +8,21 @@ import Registration from '../models/Registration.js';
 import { logger } from '../config/logger.js';
 
 /**
- * IPN reconciliation — the single authoritative path from Pending → Paid
- * (Section 6.2).
+ * IPN reconciliation — the single authoritative path from Pending → Paid.
  *
- * Callers must invoke the full flow (validation API + amount/currency check +
- * atomic capacity reservation) before ever setting `paymentStatus = 'Paid'`.
+ * CellFin flow: the IPN POST body is treated as UNTRUSTED — its `status` field
+ * is never branched on. The registration is looked up by the body's
+ * `correlationId` (== our tran_id), then re-verified against CellFin's STATUS
+ * query API using the body's `token`. Only that queried status drives a
+ * state change. Callers must invoke the full flow (authoritative query +
+ * amount check + atomic capacity reservation) before ever setting
+ * `paymentStatus = 'Paid'`.
  */
-export async function reconcileIpn({ tranId, valId, body }) {
+export async function reconcileIpn({ correlationId, token, body }) {
   // 1. Load the pending registration
-  const registration = await Registration.findOne({ tran_id: tranId });
+  const registration = await Registration.findOne({ tran_id: correlationId });
   if (!registration) {
-    logger.warn({ tranId, valId }, 'IPN received for unknown tran_id');
+    logger.warn({ correlationId, token, body }, 'IPN received for unknown correlation_id');
     return { status: 'not_found' };
   }
 
@@ -27,78 +31,80 @@ export async function reconcileIpn({ tranId, valId, body }) {
     return { status: 'already_paid', registration };
   }
 
-  // 3. Verify the transaction against SSLCommerz's validation API — the only
-  //    source of truth. Never trust the POST body alone.
-  let validation;
+  // 3. Authoritative re-verification — never trust the POST body's status.
+  let queried;
   try {
-    validation = await validateTransaction(valId, tranId);
+    queried = await queryStatus({ correlationId, token });
   } catch (err) {
-    if (err instanceof SslcommerzError) {
-      logger.error({ err, tranId, valId }, 'SSLCommerz validation API call failed');
+    if (err instanceof CellfinError) {
+      logger.error({ err, correlationId, token, ipnBody: body }, 'CellFin status query failed');
       registration.paymentStatus = PAYMENT_STATUSES.NETWORK_ERROR;
-      registration.gatewayValidationId = valId;
       await registration.save();
       return { status: 'network_error', registration };
     }
     throw err;
   }
 
-  // Mock mode: valId cannot be validated remotely; verify via raw body fields
-  const mock = isMockMode() && validation?.mock === true;
-
-  if (!mock && validation?.status !== 'VALID') {
-    logger.warn({ tranId, valId, validation }, 'Transaction not VALID');
-    registration.paymentStatus = PAYMENT_STATUSES.VERIFICATION_FAILED;
-    registration.gatewayValidationId = valId;
+  // 4. Map the QUERIED status through the single source of truth. Anything
+  //    other than APPROVED stops here. An unrecognized status is Verification
+  //    Failed + a loud log — never guessed.
+  const queriedStatus = queried?.status;
+  if (queriedStatus !== CELLFIN_APPROVED_STATUS) {
+    const mapped = CELLFIN_STATUS_MAP[queriedStatus];
+    if (!mapped) {
+      logger.error(
+        { queriedStatus, correlationId, queryResult: queried },
+        'UNRECOGNIZED CellFin status — flagging as Verification Failed'
+      );
+      registration.paymentStatus = PAYMENT_STATUSES.VERIFICATION_FAILED;
+    } else {
+      logger.warn(
+        { queriedStatus, correlationId, mapped },
+        'CellFin transaction not approved — applying mapped status'
+      );
+      registration.paymentStatus = mapped;
+    }
     await registration.save();
-    return { status: 'verification_failed', registration };
+    return { status: 'not_approved', registration, queriedStatus };
   }
 
-  // 4. Amount / currency check
-  const validationAmount = Number(validation?.amount || body?.amount || body?.value || registration.payableAmount);
-  const validationCurrency = validation?.currency || body?.currency || CURRENCY;
-  const numericAmount = typeof validationAmount === 'string' ? Number(validationAmount) : validationAmount;
+  // 5. Amount / currency check. BDT-only gateway; CellFin returns tr_amount.
+  const mock = isMockMode() && queried?.mock === true;
+  const trAmount = Number(queried?.tr_amount ?? body?.tr_amount);
+  const numericAmount = Number.isFinite(trAmount) ? trAmount : registration.payableAmount;
 
   if (!mock && numericAmount !== registration.payableAmount) {
     logger.warn(
-      { expected: registration.payableAmount, got: numericAmount, tranId },
+      { expected: registration.payableAmount, got: numericAmount, correlationId },
       'Amount mismatch — rejecting'
     );
     registration.paymentStatus = PAYMENT_STATUSES.VERIFICATION_FAILED;
-    registration.gatewayValidationId = valId;
     await registration.save();
     return { status: 'amount_mismatch', registration };
   }
-  if (!mock && validationCurrency && validationCurrency !== CURRENCY) {
-    logger.warn({ expected: CURRENCY, got: validationCurrency, tranId }, 'Currency mismatch');
-    registration.paymentStatus = PAYMENT_STATUSES.VERIFICATION_FAILED;
-    registration.gatewayValidationId = valId;
-    await registration.save();
-    return { status: 'currency_mismatch', registration };
-  }
 
-  // 5. Atomic capacity reservation — MUST succeed before marking Paid
+  // 6. Atomic capacity reservation — MUST succeed before marking Paid.
   const { reserved, capacity } = await reserveSlot();
   if (!reserved) {
     registration.paymentStatus = PAYMENT_STATUSES.OVERSOLD_PENDING_REVIEW;
-    registration.gatewayValidationId = valId;
     registration.paidAmount = numericAmount || registration.payableAmount;
     await registration.save();
     logger.warn(
-      { tranId, paidSlots: capacity?.paidSlots, maxCapacity: capacity?.maxCapacity },
+      { correlationId, paidSlots: capacity?.paidSlots, maxCapacity: capacity?.maxCapacity },
       'Capacity exhausted — Oversold-PendingReview'
     );
     return { status: 'oversold', registration };
   }
 
-  // 6. Commit Paid status
+  // 7. Commit Paid status
   registration.paymentStatus = PAYMENT_STATUSES.PAID;
   registration.paidAmount = numericAmount || registration.payableAmount;
-  registration.gatewayValidationId = valId;
+  registration.gatewayToken = token;
+  registration.gatewayTrId = queried?.trId || body?.trId || null;
   registration.ticketDisplayId = issueTicket(registration.participantType);
   await registration.save();
 
-  // 7. Enqueue confirmation delivery — must never change paymentStatus
+  // 8. Enqueue confirmation delivery — must never change paymentStatus
   enqueueTicketConfirmation({
     toEmail: registration.email,
     toSms: registration.whatsappNo,
@@ -111,8 +117,8 @@ export async function reconcileIpn({ tranId, valId, body }) {
 }
 
 /**
- * Resume payment for a stuck/failed/cancelled registration (Section 6.5).
- * Called by an admin and logged as `resume_payment`.
+ * Resume payment for a stuck/failed/cancelled registration. Called by an admin
+ * and logged as `resume_payment`.
  */
 export async function resumePayment(registrationId) {
   const reg = await Registration.findById(registrationId);
@@ -135,10 +141,10 @@ export async function resumePayment(registrationId) {
     );
   }
 
-  // Issue a fresh tran_id on the same document. Status is intentionally left
-  // unchanged here — the caller flips it to Processing only AFTER the fresh
-  // gateway session is successfully created, so a gateway failure keeps the
-  // record in its original recoverable (resumable) state.
+  // Issue a fresh tran_id (== CellFin correlationId) on the same document.
+  // Status is intentionally left unchanged here — the caller flips it to
+  // Processing only AFTER the fresh gateway token is successfully created, so
+  // a gateway failure keeps the record in its original recoverable state.
   const crypto = await import('node:crypto');
   const newTranId = `tran_${crypto.randomUUID().replace(/-/g, '')}`;
   reg.tran_id = newTranId;

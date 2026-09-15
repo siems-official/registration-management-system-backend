@@ -2,8 +2,7 @@ import { asyncHandler } from '../../middleware/asyncHandler.js';
 import { success } from '../../utils/response.js';
 import { HttpError } from '../../utils/httpError.js';
 import { reconcileIpn } from '../../services/paymentService.js';
-import { initiateSession } from '../../services/sslcommerzService.js';
-import { env } from '../../config/env.js';
+import { createToken } from '../../services/cellfinService.js';
 import { logger } from '../../config/logger.js';
 import { PAYMENT_STATUSES } from '../../config/constants.js';
 import Registration from '../../models/Registration.js';
@@ -26,16 +25,10 @@ export const initiatePayment = asyncHandler(async (req, res) => {
     );
   }
 
-  const session = await initiateSession({
-    tranId: registration.tran_id,
+  const session = await createToken({
+    correlationId: registration.tran_id,
     amount: registration.payableAmount,
-    participant: registration,
-    gatewayUrls: {
-      successUrl: env.sslcommerz.successUrl,
-      failUrl: env.sslcommerz.failUrl,
-      cancelUrl: env.sslcommerz.cancelUrl,
-      ipnUrl: env.sslcommerz.ipnUrl
-    }
+    userMobile: registration.whatsappNo
   });
 
   if (registration.paymentStatus !== PAYMENT_STATUSES.PROCESSING) {
@@ -47,37 +40,33 @@ export const initiatePayment = asyncHandler(async (req, res) => {
     registrationId: registration._id,
     tran_id: registration.tran_id,
     payableAmount: registration.payableAmount,
-    gatewayUrl: session.gatewayPageUrl
+    gatewayUrl: session.redirectUrl
   });
 });
 
 /**
- * SSLCommerz IPN — server-to-server callback. The ONLY authoritative path to
- * `Paid`. The POST body is treated as untrusted; reconciliation goes through
- * the validation API (Section 6.2).
+ * CellFin IPN — server-to-server callback. The ONLY authoritative path to
+ * `Paid`. The POST body's `status` field is never branched on; reconciliation
+ * re-verifies through the CellFin STATUS query API using the body's token.
  */
 export const ipn = asyncHandler(async (req, res) => {
-  const { tran_id: tranId, val_id: valId, status: gwStatus } = req.body || {};
+  const { correlationId, token, trId, status: bodyStatus } = req.body || {};
 
-  if (!tranId || !valId) {
-    logger.warn({ body: req.body }, 'IPN received without tran_id/val_id');
+  if (!correlationId || !token) {
+    logger.warn({ body: req.body }, 'IPN received without correlationId/token');
     return res.status(200).send('IPN_OK');
   }
 
-  const result = await reconcileIpn({ tranId, valId, body: req.body || {} });
+  const result = await reconcileIpn({ correlationId, token, body: req.body || {} });
 
   logger.info(
-    { tranId, valId, gwStatus, outcome: result.status, registrationId: result.registration?._id },
+    { correlationId, trId, bodyStatus, outcome: result.status, registrationId: result.registration?._id },
     'IPN reconciled'
   );
 
-  if (result.status === 'not_found') return res.status(200).send('IPN_OK');
-
-  return success(res, {
-    status: result.status,
-    registrationId: result.registration?._id,
-    ticketDisplayId: result.registration?.ticketDisplayId ?? null
-  });
+  // Acknowledge in plain text (HTTP 200). Confirmed with the bank that an
+  // empty/simple 200 is the expected handshake; JSON is not.
+  return res.status(200).send('IPN_OK');
 });
 
 function redirectPage(title, message, extraHtml = '') {
@@ -89,7 +78,7 @@ function redirectPage(title, message, extraHtml = '') {
 }
 
 // These three are UX-only redirect targets — never a source of truth for the
-// payment state; that is the IPN's job (Section 4).
+// payment state; that is the IPN's job.
 export const gatewaySuccess = asyncHandler(async (_req, res) => {
   res.send(
     redirectPage(

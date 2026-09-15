@@ -8,14 +8,15 @@ process.env.JWT_EXPIRES_IN = '8h';
 process.env.PREAUTH_JWT_EXPIRES_IN = '5m';
 process.env.ADMIN_2FA_ISSUER = 'TestEventPlatform';
 
-process.env.SSLCOMMERZ_STORE_ID = 'teststore';
-process.env.SSLCOMMERZ_STORE_PASSWORD = 'testpass';
-process.env.SSLCOMMERZ_IS_LIVE = 'false';
-process.env.SSLCOMMERZ_SUCCESS_URL = 'http://localhost/success';
-process.env.SSLCOMMERZ_FAIL_URL = 'http://localhost/fail';
-process.env.SSLCOMMERZ_CANCEL_URL = 'http://localhost/cancel';
-process.env.SSLCOMMERZ_IPN_URL = 'http://localhost/api/payment/ipn';
-process.env.SSLCOMMERZ_MOCK = 'false';
+process.env.CELLFIN_MERCHANT_ID = 'testmerchant.28230601';
+process.env.CELLFIN_PASSWORD = 'testpass';
+process.env.CELLFIN_MERCHANT_NAME = 'testmerchant.com';
+process.env.CELLFIN_IS_LIVE = 'false';
+process.env.CELLFIN_SUCCESS_URL = 'http://localhost/CellFinSuccess';
+process.env.CELLFIN_FAIL_URL = 'http://localhost/CellFinFail';
+process.env.CELLFIN_CANCEL_URL = 'http://localhost/CellFinCancel';
+process.env.CELLFIN_IPN_URL = 'http://localhost/api/payment/CellFinIPN';
+process.env.CELLFIN_MOCK = 'false';
 
 process.env.SMTP_HOST = 'localhost';
 process.env.SMTP_PORT = '2500';

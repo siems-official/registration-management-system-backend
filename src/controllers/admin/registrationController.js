@@ -11,10 +11,9 @@ import { issueTicket } from '../../services/ticketService.js';
 import { enqueueTicketConfirmation } from '../../services/queueService.js';
 import { logAdminAction } from '../../services/auditService.js';
 import { resumePayment } from '../../services/paymentService.js';
-import { initiateSession, refundTransaction } from '../../services/sslcommerzService.js';
+import { createToken } from '../../services/cellfinService.js';
 import { readStoredPhoto } from '../../services/uploadService.js';
 import { AUDIT_ACTIONS, PAYMENT_STATUSES, REGISTRATION_SOURCES } from '../../config/constants.js';
-import { env } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
 import Registration from '../../models/Registration.js';
 import FeeConfig from '../../models/FeeConfig.js';
@@ -23,15 +22,6 @@ const MASKED_FIELDS = { __v: 0 };
 
 function clientIp(req) {
   return req.ip || null;
-}
-
-function gatewayUrls() {
-  return {
-    successUrl: env.sslcommerz.successUrl,
-    failUrl: env.sslcommerz.failUrl,
-    cancelUrl: env.sslcommerz.cancelUrl,
-    ipnUrl: env.sslcommerz.ipnUrl
-  };
 }
 
 export const listRegistrations = asyncHandler(async (req, res) => {
@@ -169,16 +159,17 @@ export const resumePaymentAction = asyncHandler(async (req, res) => {
 
   let gatewayUrl = null;
   try {
-    const session = await initiateSession({
-      tranId: newTranId,
+    const session = await createToken({
+      correlationId: newTranId,
       amount: registration.payableAmount,
-      participant: registration,
-      gatewayUrls: gatewayUrls()
+      userMobile: registration.whatsappNo
     });
-    gatewayUrl = session.gatewayPageUrl;
+    gatewayUrl = session.redirectUrl;
   } catch (err) {
-    // The new tran_id stays on the record; an admin can retry resume-payment.
-    logger.error({ err, registrationId: registration._id, tranId: newTranId }, 'Resume-payment session init failed');
+    // The new tran_id stays on the record; an admin can retry resume-payment
+    // (this also covers a registration that never got a token in the first
+    // place — the initiation-failure case).
+    logger.error({ err, registrationId: registration._id, tranId: newTranId }, 'Resume-payment token creation failed');
     throw new HttpError(
       502,
       'GATEWAY_ERROR',
@@ -308,37 +299,14 @@ export const manualPaymentOverride = asyncHandler(async (req, res) => {
   }
 
   // action === 'refund'
-  const refundResult = await refundTransaction({
-    tranId: registration.tran_id,
-    amount: registration.paidAmount || registration.payableAmount,
-    refundRef: `override_${registration._id}_${Date.now()}`,
-    reason: note || 'Manual payment override by SuperAdmin'
-  });
-
-  const capChange = await manualCapacityChange(-1, { floorAtZero: true });
-  registration.paymentStatus = PAYMENT_STATUSES.CANCELLED;
-  await registration.save();
-
-  await logAdminAction({
-    adminId: req.admin._id,
-    action: AUDIT_ACTIONS.CAPACITY_MANUAL_OVERRIDE,
-    targetType: 'Capacity',
-    targetId: 'event',
-    before: capChange.before,
-    after: capChange.after,
-    ipAddress: clientIp(req)
-  });
-  await logAdminAction({
-    adminId: req.admin._id,
-    action: AUDIT_ACTIONS.CAPACITY_MANUAL_OVERRIDE,
-    targetType: 'Registration',
-    targetId: registration._id,
-    before: { paymentStatus: previousStatus },
-    after: { paymentStatus: PAYMENT_STATUSES.CANCELLED, refundReference: refundResult?.ref || null },
-    ipAddress: clientIp(req)
-  });
-
-  return success(res, { registrationId: registration._id, resolvedTo: PAYMENT_STATUSES.CANCELLED, refundResult, capacity: capChange.after });
+  // CellFin's refund API is out of scope for this integration. The refund must
+  // be processed manually outside the system (bank portal/branch) — never a
+  // bare, unexplained error.
+  throw new HttpError(
+    501,
+    'NOT_IMPLEMENTED',
+    'CellFin refund API is not integrated. Resolve the refund manually via the Islami Bank portal, then mark the registration cancelled/paid via the admin panel.'
+  );
 });
 
 export const registrationPhoto = asyncHandler(async (req, res) => {

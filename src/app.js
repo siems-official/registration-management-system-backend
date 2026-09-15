@@ -3,6 +3,7 @@ import helmet from 'helmet';
 import cors from 'cors';
 import express from 'express';
 import routes from './routes/index.js';
+import { paymentRouter } from './routes/public/paymentRoutes.js';
 import { globalLimiter } from './middleware/rateLimiter.js';
 import { notFoundHandler, errorHandler } from './middleware/errorHandler.js';
 import { env } from './config/env.js';
@@ -33,12 +34,12 @@ export function createApp() {
     app.use(globalLimiter);
   }
 
-  if (env.sslcommerz.mock && !env.isTest) {
+  if (env.cellfin.mock && !env.isTest) {
     logger.warn(
       '*************************************************************\n' +
-        '*  SSLCOMMERZ_MOCK=true is ON — the gateway is SIMULATED.   *\n' +
-        '*  This is for local development ONLY. Never enable it on  *\n' +
-        '*  a production server.                                     *\n' +
+        '*  CELLFIN_MOCK=true is ON — the gateway is SIMULATED.     *\n' +
+        '*  This is for local development ONLY. Never enable it on *\n' +
+        '*  a production server.                                    *\n' +
         '*************************************************************'
     );
   }
@@ -49,6 +50,10 @@ export function createApp() {
   app.get('/health', (_req, res) => res.json({ success: true, data: { status: 'ok' } }));
 
   app.use('/api', routes);
+
+  // Bank-conventional callback URLs (https://domain.com/payment/CellFinIPN — no
+  // /api prefix) registered with Islami Bank at onboarding.
+  app.use('/payment', paymentRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

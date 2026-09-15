@@ -41,3 +41,15 @@ export const verify2faLimiter = rateLimit({
   limit: env.rateLimit.strictMax,
   skip: skipInTest
 });
+
+/**
+ * Moderate limiter for the public, unauthenticated IPN route. Deliberately
+ * much looser than `strictLimiter` so legitimate gateway retries and multi-IP
+ * settlement traffic are not blocked, while junk/hammering requests are.
+ */
+export const ipnLimiter = rateLimit({
+  ...config,
+  windowMs: 60 * 1000,
+  limit: 60,
+  skip: skipInTest
+});

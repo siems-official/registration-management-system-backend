@@ -19,6 +19,7 @@ import {
   studentPayload,
   mockSessionInit,
   mockValidation,
+  cellfinIpnPayload,
   findRegistrationByEmail,
   TEST_TOTP
 } from './helpers.js';
@@ -263,6 +264,21 @@ describe('Admin auth & security', () => {
         .expect(403);
       expect(res.body.error.code).toBe('FORBIDDEN');
     });
+
+    test('refund action is 501 Not Implemented with a clear message', async () => {
+      await seedOversoldRegistration();
+      const reg = await findRegistrationByEmail('fahim@example.com');
+
+      const res = await request(app)
+        .post(`/api/admin/registrations/${reg._id}/manual-payment-override`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ action: 'refund', note: 'manual refund needed' })
+        .expect(501);
+
+      expect(res.body.error.code).toBe('NOT_IMPLEMENTED');
+      expect(res.body.error.message).toMatch(/manual.*bank portal/i);
+      expect((await Registration.findById(reg._id)).paymentStatus).toBe('Oversold-PendingReview');
+    });
   });
 
   describe('fee changes are not retroactive', () => {
@@ -273,13 +289,8 @@ describe('Admin auth & security', () => {
       const reg = await findRegistrationByEmail('fahim@example.com');
 
       // settle first registration at 2000
-      await request(app).post('/api/payment/ipn').send({
-        tran_id: reg.tran_id,
-        val_id: 'VAL-FSN-1',
-        amount: reg.payableAmount,
-        currency: 'BDT',
-        status: 'VALID'
-      });
+      mockValidation({ tr_amount: reg.payableAmount });
+      await request(app).post('/api/payment/ipn').send(cellfinIpnPayload(reg));
 
       await request(app)
         .patch('/api/admin/settings/fees')
@@ -302,16 +313,10 @@ describe('Admin auth & security', () => {
 
   describe('manual payment override flag on Paid records', () => {
     test('editing paidAmount on a Paid record requires the explicit override flag', async () => {
-      mockValidation();
       await registerParticipant(app, alumniPayload());
       const reg = await findRegistrationByEmail('fahim@example.com');
-      await request(app).post('/api/payment/ipn').send({
-        tran_id: reg.tran_id,
-        val_id: 'VAL-OVR',
-        amount: reg.payableAmount,
-        currency: 'BDT',
-        status: 'VALID'
-      });
+      mockValidation({ tr_amount: reg.payableAmount });
+      await request(app).post('/api/payment/ipn').send(cellfinIpnPayload(reg));
 
       const reject = await request(app)
         .patch(`/api/admin/registrations/${reg._id}`)

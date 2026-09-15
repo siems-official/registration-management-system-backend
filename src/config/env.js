@@ -13,12 +13,13 @@ const REQUIRED_VARS = ['JWT_SECRET'];
 if (!isTest) {
   REQUIRED_VARS.push(
     'MONGO_URI',
-    'SSLCOMMERZ_STORE_ID',
-    'SSLCOMMERZ_STORE_PASSWORD',
-    'SSLCOMMERZ_SUCCESS_URL',
-    'SSLCOMMERZ_FAIL_URL',
-    'SSLCOMMERZ_CANCEL_URL',
-    'SSLCOMMERZ_IPN_URL',
+    'CELLFIN_MERCHANT_ID',
+    'CELLFIN_PASSWORD',
+    'CELLFIN_MERCHANT_NAME',
+    'CELLFIN_SUCCESS_URL',
+    'CELLFIN_FAIL_URL',
+    'CELLFIN_CANCEL_URL',
+    'CELLFIN_IPN_URL',
     'SMTP_HOST',
     'SMTP_PORT',
     'SMTP_USER',
@@ -64,15 +65,17 @@ export const env = {
   bcryptRounds: parseIntSafe(process.env.BCRYPT_ROUNDS, 12),
   admin2faIssuer: process.env.ADMIN_2FA_ISSUER || 'AlumniEventPlatform',
 
-  sslcommerz: {
-    storeId: process.env.SSLCOMMERZ_STORE_ID,
-    storePassword: process.env.SSLCOMMERZ_STORE_PASSWORD,
-    isLive: bool(process.env.SSLCOMMERZ_IS_LIVE),
-    mock: bool(process.env.SSLCOMMERZ_MOCK),
-    successUrl: process.env.SSLCOMMERZ_SUCCESS_URL,
-    failUrl: process.env.SSLCOMMERZ_FAIL_URL,
-    cancelUrl: process.env.SSLCOMMERZ_CANCEL_URL,
-    ipnUrl: process.env.SSLCOMMERZ_IPN_URL
+  cellfin: {
+    merchantId: process.env.CELLFIN_MERCHANT_ID,
+    password: process.env.CELLFIN_PASSWORD,
+    merchantName: process.env.CELLFIN_MERCHANT_NAME,
+    isLive: bool(process.env.CELLFIN_IS_LIVE),
+    mock: bool(process.env.CELLFIN_MOCK),
+    overrideBaseUrl: process.env.CELLFIN_ALLOW_OVERRIDE_URL,
+    successUrl: process.env.CELLFIN_SUCCESS_URL,
+    failUrl: process.env.CELLFIN_FAIL_URL,
+    cancelUrl: process.env.CELLFIN_CANCEL_URL,
+    ipnUrl: process.env.CELLFIN_IPN_URL
   },
 
   smtp: {
